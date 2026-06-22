@@ -436,13 +436,20 @@ func BuildPhase(name, target string, profile profiles.Profile, layout Layout, wl
 			},
 		}, nil
 	case "resolve":
+		// dnsx works off the system resolver; the brute resolvers (puredns,
+		// shuffledns, massdns) all REQUIRE a resolvers list, so they are only
+		// added when one is available. shuffledns v1.2+ needs `-mode resolve`.
+		dnsxArgs := []string{"-l", perms, "-silent", "-a", "-resp"}
+		if resolvers != "" {
+			dnsxArgs = append(dnsxArgs, "-r", resolvers)
+		}
 		cmds := []runner.CommandSpec{
-			spec("dnsx", []string{"-l", perms, "-silent", "-a", "-resp"}, filepath.Join(layout.DNS, "dnsx.txt"), true, perms),
-			spec("puredns", []string{"resolve", perms, "-w", filepath.Join(layout.DNS, "puredns.txt")}, logFile("puredns"), true, perms),
+			spec("dnsx", dnsxArgs, filepath.Join(layout.DNS, "dnsx.txt"), true, perms),
 		}
 		if resolvers != "" {
 			cmds = append(cmds,
-				spec("shuffledns", []string{"-d", target, "-list", perms, "-r", resolvers, "-o", filepath.Join(layout.DNS, "shuffledns.txt")}, logFile("shuffledns"), true, perms),
+				spec("puredns", []string{"resolve", perms, "-r", resolvers, "-w", filepath.Join(layout.DNS, "puredns.txt")}, logFile("puredns"), true, perms),
+				spec("shuffledns", []string{"-mode", "resolve", "-d", target, "-list", perms, "-r", resolvers, "-o", filepath.Join(layout.DNS, "shuffledns.txt")}, logFile("shuffledns"), true, perms),
 				spec("massdns", []string{"-r", resolvers, "-t", "A", "-o", "S", "-w", filepath.Join(layout.DNS, "massdns.txt"), perms}, logFile("massdns"), true, perms),
 			)
 		}
