@@ -767,14 +767,17 @@ func PhaseOrder() []string {
 	// it explodes to millions of candidates and is slow/noisy on wildcard
 	// domains. Run it explicitly with `--phase dnsgen` before `--phase resolve`
 	// when you want permutation brute-forcing.
-	return []string{"assets", "subdomains", "ct", "resolve", "alive", "urls", "crawl", "js", "secrets", "ports", "shortscan", "api", "nuclei", "takeover", "fuzz", "intel", "meg"}
+	// nuclei (full template scan) is intentionally NOT in the default order: on
+	// fast it can't cover many hosts within its budget. Run it explicitly with
+	// `xfound hunt <t> --phase nuclei --profile normal` when you want it.
+	return []string{"assets", "subdomains", "ct", "resolve", "alive", "urls", "crawl", "js", "secrets", "ports", "shortscan", "api", "takeover", "fuzz", "intel", "meg"}
 }
 
 func selectedPhases(phase string) ([]string, error) {
 	if phase == "" {
 		return PhaseOrder(), nil
 	}
-	valid := append(PhaseOrder(), "dnsgen", "lazyrecon")
+	valid := append(PhaseOrder(), "dnsgen", "nuclei", "lazyrecon")
 	for _, v := range valid {
 		if phase == v {
 			return []string{phase}, nil

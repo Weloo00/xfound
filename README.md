@@ -61,7 +61,6 @@ The default pipeline runs in this order:
 | `ports`      | naabu (excludes 80/443 — finds non-web services)   | `ports`      |
 | `shortscan`  | shortscan (IIS short-name)                         | `fuzz`       |
 | `api`        | kiterunner                                         | `api`        |
-| `nuclei`     | nuclei                                             | `nuclei`     |
 | `takeover`   | nuclei (`-tags takeover`)                          | `takeover`   |
 | `fuzz`       | ffuf, gobuster, dirsearch, arjun, paramspider      | `fuzz`       |
 | `intel`      | gitdorker (GitHub dorking)                         | `intel`      |
