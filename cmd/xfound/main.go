@@ -94,6 +94,9 @@ func runPipeline(ctx context.Context, args []string) error {
 		return err
 	}
 	manager := pipeline.Manager{}
+	if !*dryRun {
+		manager.Progress = os.Stderr
+	}
 	meta, err := manager.Run(ctx, pipeline.Options{
 		Target:        *target,
 		ScopeFile:     *scopeFile,
@@ -146,10 +149,16 @@ func runHunt(ctx context.Context, args []string) error {
 	outputRoot := fs.String("output-root", "/root/Targets", "target output root")
 	wordlistsRoot := fs.String("wordlists-root", "/root/tools/wordlists", "wordlists root")
 	toolsMap := fs.String("tools-map", "", "JSON file mapping tool names to executable paths")
-	if err := fs.Parse(args); err != nil {
+	// Accept the target in any position (e.g. `hunt example.com --dry-run` or
+	// `hunt --dry-run example.com`). Go's flag package stops at the first
+	// positional, so pull the bare domain out before parsing the flags.
+	target, rest := splitTarget(args)
+	if err := fs.Parse(rest); err != nil {
 		return err
 	}
-	target := fs.Arg(0)
+	if target == "" {
+		target = fs.Arg(0)
+	}
 	if target == "" {
 		return fmt.Errorf("usage: xfound hunt <target> [--profile fast|normal|deep] [--dry-run]")
 	}
@@ -157,6 +166,9 @@ func runHunt(ctx context.Context, args []string) error {
 		*toolsMap = defaultToolsMap()
 	}
 	manager := pipeline.Manager{}
+	if !*dryRun {
+		manager.Progress = os.Stderr
+	}
 	meta, err := manager.Run(ctx, pipeline.Options{
 		Target:        target,
 		ProfileName:   *profileName,
@@ -176,6 +188,49 @@ func runHunt(ctx context.Context, args []string) error {
 		return nil
 	}
 	return pipeline.PrintStatus(os.Stdout, meta, false)
+}
+
+// splitTarget pulls the first bare (non-dash) argument out of args, returning
+// it as the target plus the remaining args (flags) in original order. A token
+// immediately following a known value-flag is treated as that flag's value, not
+// the target.
+func splitTarget(args []string) (string, []string) {
+	valueFlags := map[string]bool{
+		"--profile": true, "-profile": true,
+		"--phase": true, "-phase": true,
+		"--output-root": true, "-output-root": true,
+		"--wordlists-root": true, "-wordlists-root": true,
+		"--tools-map": true, "-tools-map": true,
+	}
+	target := ""
+	var rest []string
+	expectValue := false
+	for _, a := range args {
+		switch {
+		case expectValue:
+			rest = append(rest, a)
+			expectValue = false
+		case len(a) > 0 && a[0] == '-':
+			rest = append(rest, a)
+			if valueFlags[a] && !containsRune(a, '=') {
+				expectValue = true
+			}
+		case target == "":
+			target = a
+		default:
+			rest = append(rest, a)
+		}
+	}
+	return target, rest
+}
+
+func containsRune(s string, r rune) bool {
+	for _, c := range s {
+		if c == r {
+			return true
+		}
+	}
+	return false
 }
 
 // defaultToolsMap returns the first existing default tools-map path, or "".

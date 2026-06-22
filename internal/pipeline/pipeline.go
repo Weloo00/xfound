@@ -46,6 +46,15 @@ type CommandRunner interface {
 type Manager struct {
 	Locator  ToolLocator
 	Executor CommandRunner
+	// Progress, when set, receives friendly human-readable progress lines as
+	// phases and tools run (CLI uses os.Stderr). Ignored for dry-runs.
+	Progress io.Writer
+}
+
+func (m Manager) logf(format string, args ...any) {
+	if m.Progress != nil {
+		fmt.Fprintf(m.Progress, format+"\n", args...)
+	}
 }
 
 type Options struct {
@@ -201,7 +210,11 @@ func (m Manager) Run(ctx context.Context, opts Options) (*RunMetadata, error) {
 		executor = runner.Runner{}
 	}
 
-	for _, phaseName := range phaseNames {
+	if !opts.DryRun {
+		m.logf("\n▶ %s  —  profile: %s  —  phases: %d", target, profile.Name, len(phaseNames))
+		m.logf("  output: %s", layout.Root)
+	}
+	for i, phaseName := range phaseNames {
 		plan, err := BuildPhase(phaseName, target, profile, layout, wl)
 		if err != nil {
 			return nil, err
@@ -214,7 +227,13 @@ func (m Manager) Run(ctx context.Context, opts Options) (*RunMetadata, error) {
 			phaseRun.Counts = collectCounts(layout)
 			meta.Phases = append(meta.Phases, phaseRun)
 			meta.OutputCount = phaseRun.Counts
+			if !opts.DryRun {
+				m.logf("\n[%d/%d] %-11s ↩ already done (resume) — skipping", i+1, len(phaseNames), phaseName)
+			}
 			continue
+		}
+		if !opts.DryRun {
+			m.logf("\n[%d/%d] %-11s starting…", i+1, len(phaseNames), phaseName)
 		}
 
 		var phaseResults []runner.Result
@@ -244,6 +263,7 @@ func (m Manager) Run(ctx context.Context, opts Options) (*RunMetadata, error) {
 				phaseResults = append(phaseResults, res)
 				phaseRun.Tools[spec.Tool] = "missing"
 				meta.Missing[spec.Tool] = spec.Phase
+				m.logf("  · %-12s — not installed, skipping", spec.Tool)
 				continue
 			}
 			if spec.RequiresFile != "" && !fileExists(spec.RequiresFile) {
@@ -251,21 +271,27 @@ func (m Manager) Run(ctx context.Context, opts Options) (*RunMetadata, error) {
 				phaseResults = append(phaseResults, res)
 				phaseRun.Tools[spec.Tool] = "skipped"
 				meta.Skipped[spec.Tool] = res.SkipReason
+				m.logf("  · %-12s — no input yet, skipping", spec.Tool)
 				continue
 			}
+			m.logf("  • %-12s running… (max %s)", spec.Tool, spec.TimeoutLabel)
 			res := executor.Run(ctx, spec)
 			phaseResults = append(phaseResults, res)
 			switch {
 			case res.TimedOut:
 				phaseRun.Tools[spec.Tool] = "timeout"
 				meta.Timeouts[spec.Tool] = spec.Phase
+				m.logf("  ⧖ %-12s — hit time limit, moving on", spec.Tool)
 			case res.Skipped:
 				phaseRun.Tools[spec.Tool] = "skipped"
 				meta.Skipped[spec.Tool] = res.SkipReason
+				m.logf("  · %-12s — skipped (%s)", spec.Tool, res.SkipReason)
 			case res.ExitCode == 0:
 				phaseRun.Tools[spec.Tool] = "ok"
+				m.logf("  ✓ %-12s — done%s", spec.Tool, lineSuffix(spec.StdoutFile))
 			default:
 				phaseRun.Tools[spec.Tool] = "failed"
+				m.logf("  ✗ %-12s — failed (exit %d, see %s)", spec.Tool, res.ExitCode, filepath.Base(spec.StderrFile))
 			}
 		}
 		meta.Results = append(meta.Results, phaseResults...)
@@ -287,12 +313,27 @@ func (m Manager) Run(ctx context.Context, opts Options) (*RunMetadata, error) {
 		if err := SaveMetadata(layout.Root, meta); err != nil {
 			return nil, err
 		}
+		if !opts.DryRun {
+			took := phaseRun.FinishedAt.Sub(phaseRun.StartedAt).Round(time.Second)
+			m.logf("  └ %s in %s", phaseRun.Status, took)
+		}
 		if !opts.DryRun && phaseRun.Status == "failed" && len(plan.RequiredAny) > 0 {
+			m.logf("\n✗ Stopping: required phase %q failed. Fix the tool above and re-run (it resumes).", phaseName)
 			break
 		}
 	}
 	meta.UpdatedAt = time.Now().UTC()
 	meta.OutputCount = collectCounts(layout)
+	if !opts.DryRun {
+		m.logf("\n✔ Done in %s. Highlights:", meta.UpdatedAt.Sub(meta.StartedAt).Round(time.Second))
+		for _, k := range []string{"subdomains", "dns_resolved", "alive_urls", "urls", "js_urls", "ports", "nuclei", "takeover"} {
+			if v := meta.OutputCount[k]; v > 0 {
+				m.logf("    %-13s %d", k, v)
+			}
+		}
+		m.logf("  results: %s", layout.Root)
+		m.logf("  view later: xfound status --target %s", target)
+	}
 	if len(meta.Missing) == 0 {
 		meta.Missing = nil
 	}
@@ -947,6 +988,19 @@ func collectCounts(l Layout) map[string]int {
 		counts[name] = lineCount(path)
 	}
 	return counts
+}
+
+// lineSuffix renders " (N lines)" for a tool's output file, or "" when the
+// file is absent/empty. Used for friendly per-tool progress messages.
+func lineSuffix(path string) string {
+	if path == "" {
+		return ""
+	}
+	n := lineCount(path)
+	if n <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (%d lines)", n)
 }
 
 func lineCount(path string) int {
