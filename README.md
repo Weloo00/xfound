@@ -16,7 +16,12 @@ xfound hunt spendesk.com              # auto-scope (apex + subs) + run everythin
 xfound hunt spendesk.com --dry-run    # preview commands first (recommended)
 xfound hunt spendesk.com --profile fast
 xfound status --target spendesk.com   # progress + output counts
+xfound report spendesk.com            # human-readable summary (saves report.md)
 ```
+
+`report` parses the JSONL files (httpx, nuclei) into plain lines and lists the
+plaintext results — subdomains, live hosts (status/title/tech), URLs, JS,
+secrets, ports, nuclei findings by severity, and subdomain takeovers.
 
 `hunt` needs no scope file — it authorizes the target apex and its subdomains
 automatically, and auto-loads `tools.json` (cwd) or `/root/.xfound/tools.json`
