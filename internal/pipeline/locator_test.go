@@ -103,6 +103,41 @@ func TestExtractShodanDomainJoinsHostsToApex(t *testing.T) {
 	}
 }
 
+func TestExtractShodanCertsSplitsHostsAndIPs(t *testing.T) {
+	dir := t.TempDir()
+	in := filepath.Join(dir, "shodan-certs.txt")
+	hostsOut := filepath.Join(dir, "hosts.txt")
+	ipsOut := filepath.Join(dir, "ips.txt")
+	raw := "1.2.3.4\t443\tapp.spendesk.com;www.spendesk.com\n" +
+		"5.6.7.8 8443 api.spendesk.com,other.example.com\n" +
+		"9.9.9.9 443 *.spendesk.com\n"
+	if err := os.WriteFile(in, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := extractShodanCerts(in, hostsOut, ipsOut, "spendesk.com"); err != nil {
+		t.Fatal(err)
+	}
+	hosts := splitLines(string(mustRead(t, hostsOut)))
+	wantHosts := []string{"api.spendesk.com", "app.spendesk.com", "spendesk.com", "www.spendesk.com"}
+	if strings.Join(hosts, ",") != strings.Join(wantHosts, ",") {
+		t.Fatalf("hosts = %v want %v", hosts, wantHosts)
+	}
+	ips := splitLines(string(mustRead(t, ipsOut)))
+	wantIPs := []string{"1.2.3.4", "5.6.7.8", "9.9.9.9"}
+	if strings.Join(ips, ",") != strings.Join(wantIPs, ",") {
+		t.Fatalf("ips = %v want %v", ips, wantIPs)
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
 func TestAppendSubdomainsFiltersNoise(t *testing.T) {
 	dir := t.TempDir()
 	in := filepath.Join(dir, "dnscan.txt")

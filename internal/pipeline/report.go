@@ -37,6 +37,8 @@ func Report(w io.Writer, target, outputRoot string) error {
 	}
 	fmt.Fprintf(w, "output:  %s\n", layout.Root)
 
+	reportList(w, "Root assets — in-scope hosts (Shodan cert / amass intel)", filepath.Join(layout.Assets, "hosts.txt"), 40)
+	reportList(w, "Root assets — IPs (origin/WAF-bypass candidates)", filepath.Join(layout.Assets, "ips.txt"), 40)
 	reportList(w, "Subdomains", filepath.Join(layout.Subdomains, "all.txt"), 80)
 	reportList(w, "Resolved (live DNS)", filepath.Join(layout.DNS, "resolved.txt"), 0)
 	reportHTTPX(w, filepath.Join(layout.Alive, "httpx.jsonl"))

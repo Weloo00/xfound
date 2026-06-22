@@ -48,7 +48,8 @@ The default pipeline runs in this order:
 
 | Phase        | Tools                                              | Output dir   |
 |--------------|----------------------------------------------------|--------------|
-| `subdomains` | subfinder, amass, dnscan                           | `subdomains` |
+| `assets`     | shodan (SSL cert CN), amass intel (reverse-whois)  | `assets`     |
+| `subdomains` | subfinder -all, shodan domain, dnscan              | `subdomains` |
 | `ct`         | crtndstry                                          | `subdomains` |
 | `dnsgen`     | dnsgen, altdns                                     | `dns`        |
 | `resolve`    | dnsx, puredns, shuffledns, massdns                 | `dns`        |
@@ -57,7 +58,7 @@ The default pipeline runs in this order:
 | `crawl`      | katana, hakrawler, gospider                        | `urls`       |
 | `js`         | JSParser, lazyegg (+ js-urls.txt extraction)       | `js`         |
 | `secrets`    | mantra, jssecrets, trufflehog                      | `secrets`    |
-| `ports`      | naabu                                              | `ports`      |
+| `ports`      | naabu (excludes 80/443 — finds non-web services)   | `ports`      |
 | `shortscan`  | shortscan (IIS short-name)                         | `fuzz`       |
 | `api`        | kiterunner                                         | `api`        |
 | `nuclei`     | nuclei                                             | `nuclei`     |

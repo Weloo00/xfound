@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -121,6 +122,7 @@ type Layout struct {
 	API        string
 	Takeover   string
 	Intel      string
+	Assets     string
 	Errors     string
 	Logs       string
 }
@@ -383,12 +385,29 @@ func BuildPhase(name, target string, profile profiles.Profile, layout Layout, wl
 	jsURLs := filepath.Join(layout.JS, "js-urls.txt")
 
 	switch name {
+	case "assets":
+		// Root asset discovery before subdomain enum: find hosts via Shodan SSL
+		// certificate CN search and (optionally) amass intel reverse-whois. The
+		// in-scope hostnames are extracted to assets/hosts.txt and merged into
+		// the subdomains list; IPs are kept in assets/ips.txt for origin hunting.
+		return PhasePlan{
+			Name: name,
+			Commands: []runner.CommandSpec{
+				spec("shodan", []string{"search", "--fields", "ip_str,port,hostnames", "ssl.cert.subject.cn:" + target}, filepath.Join(layout.Assets, "shodan-certs.txt"), true, ""),
+				spec("amass", []string{"intel", "-d", target, "-whois"}, filepath.Join(layout.Assets, "amass-intel.txt"), true, ""),
+			},
+			Post: func(l Layout) error {
+				_ = extractShodanCerts(filepath.Join(l.Assets, "shodan-certs.txt"), filepath.Join(l.Assets, "hosts.txt"), filepath.Join(l.Assets, "ips.txt"), target)
+				// fold any in-scope hosts amass intel found into the host list too
+				return appendSubdomains(filepath.Join(l.Assets, "hosts.txt"), target, filepath.Join(l.Assets, "hosts.txt"), filepath.Join(l.Assets, "amass-intel.txt"))
+			},
+		}, nil
 	case "subdomains":
 		// amass is intentionally NOT run here — it is slow and routinely hits its
 		// timeout; run it manually (e.g. `amass enum -passive -d <target>`) and
 		// drop the output into subdomains/amass.txt to have it merged on re-run.
 		cmds := []runner.CommandSpec{
-			spec("subfinder", []string{"-d", target, "-silent"}, filepath.Join(layout.Subdomains, "subfinder.txt"), true, ""),
+			spec("subfinder", []string{"-d", target, "-all", "-silent"}, filepath.Join(layout.Subdomains, "subfinder.txt"), true, ""),
 			spec("shodan", []string{"domain", target}, filepath.Join(layout.Subdomains, "shodan-raw.txt"), true, ""),
 		}
 		if dnsWordlist != "" {
@@ -401,8 +420,9 @@ func BuildPhase(name, target string, profile profiles.Profile, layout Layout, wl
 			Post: func(l Layout) error {
 				// shodan domain output needs the host column joined to the apex.
 				_ = extractShodanDomain(filepath.Join(l.Subdomains, "shodan-raw.txt"), filepath.Join(l.Subdomains, "shodan.txt"), target)
-				// amass.txt is merged if present (drop in manual amass output).
-				return appendSubdomains(filepath.Join(l.Subdomains, "all.txt"), target, filepath.Join(l.Subdomains, "subfinder.txt"), filepath.Join(l.Subdomains, "amass.txt"), filepath.Join(l.Subdomains, "crtndstry.txt"), filepath.Join(l.Subdomains, "dnscan.txt"), filepath.Join(l.Subdomains, "shodan.txt"))
+				// amass.txt is merged if present (drop in manual amass output);
+				// assets/hosts.txt brings in the root-asset discovery results.
+				return appendSubdomains(filepath.Join(l.Subdomains, "all.txt"), target, filepath.Join(l.Subdomains, "subfinder.txt"), filepath.Join(l.Subdomains, "amass.txt"), filepath.Join(l.Subdomains, "crtndstry.txt"), filepath.Join(l.Subdomains, "dnscan.txt"), filepath.Join(l.Subdomains, "shodan.txt"), filepath.Join(l.Assets, "hosts.txt"))
 			},
 		}, nil
 	case "ct":
@@ -568,7 +588,9 @@ func BuildPhase(name, target string, profile profiles.Profile, layout Layout, wl
 		return PhasePlan{
 			Name: name,
 			Commands: []runner.CommandSpec{
-				spec("naabu", []string{"-list", resolved, "-silent", "-o", filepath.Join(layout.Ports, "naabu.txt")}, logFile("naabu"), true, resolved),
+				// Skip the standard web ports (httpx already covers those) so the
+				// scan focuses on services hiding on non-standard/high ports.
+				spec("naabu", []string{"-list", resolved, "-silent", "-exclude-ports", "80,443,21,22,25,53", "-o", filepath.Join(layout.Ports, "naabu.txt")}, logFile("naabu"), true, resolved),
 			},
 		}, nil
 	case "nuclei":
@@ -582,7 +604,8 @@ func BuildPhase(name, target string, profile profiles.Profile, layout Layout, wl
 		cmds := []runner.CommandSpec{}
 		if webWordlist != "" {
 			cmds = append(cmds,
-				spec("ffuf", []string{"-w", webWordlist, "-u", "https://" + target + "/FUZZ", "-of", "json", "-o", filepath.Join(layout.Fuzz, "ffuf.json")}, logFile("ffuf"), true, webWordlist),
+				// -ac auto-calibrates filters and -fc 404 drops not-found noise.
+				spec("ffuf", []string{"-w", webWordlist, "-u", "https://" + target + "/FUZZ", "-ac", "-fc", "404", "-of", "json", "-o", filepath.Join(layout.Fuzz, "ffuf.json")}, logFile("ffuf"), true, webWordlist),
 				spec("gobuster", []string{"dir", "-u", "https://" + target, "-w", webWordlist, "-o", filepath.Join(layout.Fuzz, "gobuster.txt")}, logFile("gobuster"), true, webWordlist),
 				spec("dirsearch", []string{"-u", "https://" + target, "-w", webWordlist, "-o", filepath.Join(layout.Fuzz, "dirsearch.txt")}, logFile("dirsearch"), true, webWordlist),
 			)
@@ -728,6 +751,7 @@ func NewLayout(outputRoot, target string) Layout {
 		API:        filepath.Join(root, "api"),
 		Takeover:   filepath.Join(root, "takeover"),
 		Intel:      filepath.Join(root, "intel"),
+		Assets:     filepath.Join(root, "assets"),
 		Errors:     filepath.Join(root, "errors"),
 		Logs:       filepath.Join(root, "logs"),
 	}
@@ -738,7 +762,7 @@ func PhaseOrder() []string {
 	// it explodes to millions of candidates and is slow/noisy on wildcard
 	// domains. Run it explicitly with `--phase dnsgen` before `--phase resolve`
 	// when you want permutation brute-forcing.
-	return []string{"subdomains", "ct", "resolve", "alive", "urls", "crawl", "js", "secrets", "ports", "shortscan", "api", "nuclei", "takeover", "fuzz", "intel", "meg"}
+	return []string{"assets", "subdomains", "ct", "resolve", "alive", "urls", "crawl", "js", "secrets", "ports", "shortscan", "api", "nuclei", "takeover", "fuzz", "intel", "meg"}
 }
 
 func selectedPhases(phase string) ([]string, error) {
@@ -810,7 +834,7 @@ func phaseComplete(meta *RunMetadata, phase string) bool {
 }
 
 func ensureLayout(l Layout) error {
-	for _, dir := range []string{l.Root, l.Subdomains, l.DNS, l.Alive, l.URLs, l.JS, l.Ports, l.Nuclei, l.Fuzz, l.Meg, l.Secrets, l.API, l.Takeover, l.Intel, l.Errors, l.Logs} {
+	for _, dir := range []string{l.Root, l.Subdomains, l.DNS, l.Alive, l.URLs, l.JS, l.Ports, l.Nuclei, l.Fuzz, l.Meg, l.Secrets, l.API, l.Takeover, l.Intel, l.Assets, l.Errors, l.Logs} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
@@ -1062,6 +1086,54 @@ func extractShodanDomain(input, out, target string) error {
 	return os.WriteFile(out, []byte(strings.Join(hosts, "\n")+newlineIfAny(hosts)), 0o644)
 }
 
+// extractShodanCerts parses `shodan search --fields ip_str,port,hostnames`
+// output. Each row is whitespace-separated ("<ip> <port> <host1;host2,...>").
+// In-scope hostnames (apex or subdomain of target) go to hostsOut; the IPs go
+// to ipsOut for origin/WAF-bypass hunting.
+func extractShodanCerts(input, hostsOut, ipsOut, target string) error {
+	f, err := os.Open(input)
+	if err != nil {
+		return appendUnique(hostsOut)
+	}
+	defer f.Close()
+	target = strings.ToLower(strings.TrimSuffix(target, "."))
+	hostSeen := map[string]bool{}
+	ipSeen := map[string]bool{}
+	var hosts, ips []string
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 1024*1024), 8*1024*1024)
+	for sc.Scan() {
+		fields := strings.Fields(sc.Text())
+		for _, fld := range fields {
+			if ip := net.ParseIP(fld); ip != nil {
+				if !ipSeen[fld] {
+					ipSeen[fld] = true
+					ips = append(ips, fld)
+				}
+				continue
+			}
+			// hostnames field may pack several names with ; or , separators
+			for _, h := range strings.FieldsFunc(fld, func(r rune) bool { return r == ';' || r == ',' }) {
+				h = strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(h), "*."), "."))
+				if h == "" || hostSeen[h] {
+					continue
+				}
+				if (h == target || strings.HasSuffix(h, "."+target)) && isHostname(h) {
+					hostSeen[h] = true
+					hosts = append(hosts, h)
+				}
+			}
+		}
+	}
+	sort.Strings(hosts)
+	sort.Strings(ips)
+	if err := os.MkdirAll(filepath.Dir(hostsOut), 0o755); err != nil {
+		return err
+	}
+	_ = os.WriteFile(ipsOut, []byte(strings.Join(ips, "\n")+newlineIfAny(ips)), 0o644)
+	return os.WriteFile(hostsOut, []byte(strings.Join(hosts, "\n")+newlineIfAny(hosts)), 0o644)
+}
+
 // filterByExt writes the subset of URLs from input whose path ends with ext
 // (case-insensitive, ignoring any query string) to out, de-duplicated.
 func filterByExt(input, out, ext string) error {
@@ -1097,6 +1169,8 @@ func filterByExt(input, out, ext string) error {
 
 func collectCounts(l Layout) map[string]int {
 	files := map[string]string{
+		"asset_hosts":      filepath.Join(l.Assets, "hosts.txt"),
+		"asset_ips":        filepath.Join(l.Assets, "ips.txt"),
 		"subdomains":       filepath.Join(l.Subdomains, "all.txt"),
 		"dns_permutations": filepath.Join(l.DNS, "permutations.txt"),
 		"dns_resolved":     filepath.Join(l.DNS, "resolved.txt"),
