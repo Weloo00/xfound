@@ -55,7 +55,6 @@ func SupportedTools() []string {
 		"subfinder",
 		"trufflehog",
 		"waybackurls",
-		"waymore",
 	}
 	sort.Strings(tools)
 	return tools
@@ -121,7 +120,6 @@ func build(name string, scale float64) Profile {
 		"mantra":      6 * time.Minute,
 		"shodan":      3 * time.Minute,
 		"shortscan":   5 * time.Minute,
-		"waymore":     12 * time.Minute,
 	}
 
 	budgets := make(map[string]time.Duration, len(base))

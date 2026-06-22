@@ -80,7 +80,6 @@ func Detect(opts Options) Inventory {
 		pathStatus("kiterunner", filepath.Join(opts.ToolsRoot, "kiterunner")),
 		pathStatus("mantra", filepath.Join(opts.ToolsRoot, "mantra")),
 		pathStatus("jssecrets", filepath.Join(opts.ToolsRoot, "jssecrets")),
-		pathStatus("waymore", filepath.Join(opts.ToolsRoot, "waymore")),
 		pathStatus("lazyegg", filepath.Join(opts.ToolsRoot, "lazyegg")),
 		pathStatus("shortscan", filepath.Join(opts.ToolsRoot, "shortscan")),
 	}
@@ -132,7 +131,6 @@ func ToolDefs() []ToolDef {
 		"altdns":      "dns",
 		"dnscan":      "dns",
 		"shodan":      "subdomains",
-		"waymore":     "urls",
 		"lazyrecon":   "compat",
 		"bbht":        "install",
 	}

@@ -54,7 +54,7 @@ The default pipeline runs in this order:
 | `dnsgen`     | dnsgen, altdns                                     | `dns`        |
 | `resolve`    | dnsx, puredns, shuffledns, massdns                 | `dns`        |
 | `alive`      | httpx                                              | `alive`      |
-| `urls`       | waybackurls, gau, gauplus, waymore                 | `urls`       |
+| `urls`       | waybackurls, gau, gauplus                          | `urls`       |
 | `crawl`      | katana, hakrawler, gospider                        | `urls`       |
 | `js`         | JSParser, lazyegg (+ js-urls.txt extraction)       | `js`         |
 | `secrets`    | mantra, jssecrets, trufflehog                      | `secrets`    |
@@ -83,8 +83,7 @@ dnscan, …). Point xfound at the real entrypoints with a JSON map:
   "mantra":      "/root/tools/mantra/mantra",
   "jssecrets":   "/root/tools/jssecrets/jssecrets",
   "dnscan":      "/root/tools/dnscan/dnscan.py",
-  "altdns":      "/root/tools/altdns/altdns.py",
-  "waymore":     "/root/tools/waymore/waymore.py"
+  "altdns":      "/root/tools/altdns/altdns.py"
 }
 ```
 
@@ -113,8 +112,6 @@ xfound itself stores no keys — it relies on the underlying tools' own config:
   `subdomains` phase automatically.
 - **shodan** CLI — `shodan init <KEY>` once; the `subdomains` phase then also
   runs `shodan domain <target>` and merges the hosts it returns.
-- **waymore** — `~/.config/waymore/config.yml` with `VIRUSTOTAL_API_KEY:` /
-  `URLSCAN_API_KEY:` boosts the `urls` phase.
 
 Keep real keys out of the repo (they live only on the host). Rotate any key
 that has been shared in plaintext.

@@ -508,10 +508,9 @@ func BuildPhase(name, target string, profile profiles.Profile, layout Layout, wl
 				spec("waybackurls", []string{target}, filepath.Join(layout.URLs, "waybackurls.txt"), true, ""),
 				spec("gau", []string{"--subs", target}, filepath.Join(layout.URLs, "gau.txt"), true, ""),
 				spec("gauplus", []string{"-t", "5", target}, filepath.Join(layout.URLs, "gauplus.txt"), true, ""),
-				spec("waymore", []string{"-i", target, "-mode", "U", "-oU", filepath.Join(layout.URLs, "waymore.txt")}, logFile("waymore"), true, ""),
 			},
 			Post: func(l Layout) error {
-				return appendUnique(filepath.Join(l.URLs, "all.txt"), filepath.Join(l.URLs, "waybackurls.txt"), filepath.Join(l.URLs, "gau.txt"), filepath.Join(l.URLs, "gauplus.txt"), filepath.Join(l.URLs, "waymore.txt"))
+				return appendUnique(filepath.Join(l.URLs, "all.txt"), filepath.Join(l.URLs, "waybackurls.txt"), filepath.Join(l.URLs, "gau.txt"), filepath.Join(l.URLs, "gauplus.txt"))
 			},
 		}, nil
 	case "crawl":
