@@ -514,7 +514,7 @@ func BuildPhase(name, target string, profile profiles.Profile, layout Layout, wl
 			},
 		}, nil
 	case "crawl":
-		hakrawler := spec("hakrawler", []string{"-plain"}, filepath.Join(layout.URLs, "hakrawler.txt"), true, aliveURLs)
+		hakrawler := spec("hakrawler", []string{"-subs"}, filepath.Join(layout.URLs, "hakrawler.txt"), true, aliveURLs)
 		hakrawler.StdinFile = aliveURLs
 		return PhasePlan{
 			Name: name,
@@ -551,7 +551,7 @@ func BuildPhase(name, target string, profile profiles.Profile, layout Layout, wl
 			Name: name,
 			Commands: []runner.CommandSpec{
 				mantra,
-				spec("jssecrets", []string{"-l", jsURLs}, filepath.Join(layout.Secrets, "jssecrets.txt"), true, jsURLs),
+				spec("jssecrets", []string{jsURLs}, filepath.Join(layout.Secrets, "jssecrets.txt"), true, jsURLs),
 				spec("trufflehog", []string{"filesystem", layout.JS, "--json"}, filepath.Join(layout.Secrets, "trufflehog.jsonl"), true, ""),
 			},
 		}, nil
@@ -577,10 +577,16 @@ func BuildPhase(name, target string, profile profiles.Profile, layout Layout, wl
 			},
 		}, nil
 	case "intel":
+		// gitdorker needs a GitHub token file and a dorks file. It is gated on
+		// the token file (RequiresFile) so it skips cleanly when not configured.
+		// To enable: put newline-separated tokens in /root/.xfound/github_tokens.txt
+		// and a dork list in /root/.xfound/dorks.txt.
+		ghTokens := "/root/.xfound/github_tokens.txt"
+		ghDorks := "/root/.xfound/dorks.txt"
 		return PhasePlan{
 			Name: name,
 			Commands: []runner.CommandSpec{
-				spec("gitdorker", []string{"-q", target, "-o", filepath.Join(layout.Intel, "gitdorker.txt")}, logFile("gitdorker"), true, ""),
+				spec("gitdorker", []string{"-tf", ghTokens, "-q", target, "-d", ghDorks, "-o", filepath.Join(layout.Intel, "gitdorker.txt")}, logFile("gitdorker"), true, ghTokens),
 			},
 		}, nil
 	case "ports":
