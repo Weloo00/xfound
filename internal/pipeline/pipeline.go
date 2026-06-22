@@ -374,7 +374,6 @@ func BuildPhase(name, target string, profile profiles.Profile, layout Layout, wl
 	perms := filepath.Join(layout.DNS, "permutations.txt")
 	resolved := filepath.Join(layout.DNS, "resolved.txt")
 	aliveURLs := filepath.Join(layout.Alive, "urls.txt")
-	allURLs := filepath.Join(layout.URLs, "all.txt")
 	webWordlist := wl.First("web-content")
 	paramWordlist := wl.First("params")
 	resolvers := wl.First("resolvers")
@@ -429,7 +428,7 @@ func BuildPhase(name, target string, profile profiles.Profile, layout Layout, wl
 		return PhasePlan{
 			Name: name,
 			Commands: []runner.CommandSpec{
-				spec("crtndstry", []string{"-d", target}, filepath.Join(layout.Subdomains, "crtndstry.txt"), true, ""),
+				spec("crtndstry", []string{target}, filepath.Join(layout.Subdomains, "crtndstry.txt"), true, ""),
 			},
 			Post: func(l Layout) error {
 				return appendSubdomains(filepath.Join(l.Subdomains, "all.txt"), target, filepath.Join(l.Subdomains, "all.txt"), filepath.Join(l.Subdomains, "crtndstry.txt"))
@@ -524,23 +523,24 @@ func BuildPhase(name, target string, profile profiles.Profile, layout Layout, wl
 				spec("gospider", []string{"-S", aliveURLs, "-q"}, filepath.Join(layout.URLs, "gospider.txt"), true, aliveURLs),
 			},
 			Post: func(l Layout) error {
-				return appendUnique(filepath.Join(l.URLs, "all.txt"), filepath.Join(l.URLs, "all.txt"), filepath.Join(l.URLs, "katana.txt"), filepath.Join(l.URLs, "hakrawler.txt"), filepath.Join(l.URLs, "gospider.txt"))
+				if err := appendUnique(filepath.Join(l.URLs, "all.txt"), filepath.Join(l.URLs, "all.txt"), filepath.Join(l.URLs, "katana.txt"), filepath.Join(l.URLs, "hakrawler.txt"), filepath.Join(l.URLs, "gospider.txt")); err != nil {
+					return err
+				}
+				// extract the JS file URLs here so the js/secrets phases can use them
+				return filterByExt(filepath.Join(l.URLs, "all.txt"), filepath.Join(l.JS, "js-urls.txt"), ".js")
 			},
 		}, nil
 	case "js":
-		cmds := []runner.CommandSpec{
-			spec("JSParser", []string{"-l", allURLs}, filepath.Join(layout.JS, "endpoints.txt"), true, allURLs),
-		}
-		lazyegg := spec("lazyegg", []string{}, filepath.Join(layout.JS, "lazyegg.txt"), true, allURLs)
-		lazyegg.StdinFile = allURLs
-		cmds = append(cmds, lazyegg)
+		// katana with -jc fetches each JS file and pulls endpoints out of it.
+		// (lazyegg/JSParser only take a single URL, so they don't fit here.)
 		return PhasePlan{
-			Name:     name,
-			Commands: cmds,
+			Name: name,
+			Commands: []runner.CommandSpec{
+				spec("katana", []string{"-list", jsURLs, "-jc", "-silent", "-d", "2"}, filepath.Join(layout.JS, "endpoints.txt"), true, jsURLs),
+			},
 			Post: func(l Layout) error {
 				_ = extractParams(filepath.Join(l.JS, "endpoints.txt"), filepath.Join(l.JS, "params.txt"))
 				_ = extractHosts(filepath.Join(l.JS, "endpoints.txt"), filepath.Join(l.JS, "subdomains.txt"))
-				_ = filterByExt(filepath.Join(l.URLs, "all.txt"), filepath.Join(l.JS, "js-urls.txt"), ".js")
 				return nil
 			},
 		}, nil
