@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"recon-runner/internal/install"
 	"recon-runner/internal/inventory"
@@ -37,6 +39,8 @@ func run(ctx context.Context, args []string) error {
 		return runHunt(ctx, args[1:])
 	case "status":
 		return runStatus(args[1:])
+	case "report":
+		return runReport(args[1:])
 	case "phases":
 		return runPhases(args[1:])
 	case "version":
@@ -243,6 +247,34 @@ func defaultToolsMap() string {
 	return ""
 }
 
+// runReport prints a human-readable summary of a target's recon output and
+// also saves it to <output>/report.md.
+func runReport(args []string) error {
+	fs := flag.NewFlagSet("report", flag.ExitOnError)
+	target := fs.String("target", "", "target domain")
+	outputRoot := fs.String("output-root", "/root/Targets", "target output root")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *target == "" {
+		*target = fs.Arg(0)
+	}
+	if *target == "" {
+		return fmt.Errorf("usage: xfound report <target>")
+	}
+	var buf strings.Builder
+	if err := pipeline.Report(&buf, *target, *outputRoot); err != nil {
+		return err
+	}
+	fmt.Print(buf.String())
+	// Best-effort save alongside the results.
+	reportPath := filepath.Join(*outputRoot, *target, "report.md")
+	if err := os.WriteFile(reportPath, []byte(buf.String()), 0o644); err == nil {
+		fmt.Fprintf(os.Stderr, "\nsaved: %s\n", reportPath)
+	}
+	return nil
+}
+
 func runPhases(args []string) error {
 	fs := flag.NewFlagSet("phases", flag.ExitOnError)
 	if err := fs.Parse(args); err != nil {
@@ -260,6 +292,7 @@ func usage() {
   xfound hunt example.com --dry-run       # preview the commands first
   xfound hunt example.com --profile fast  # quicker, shorter timeouts
   xfound status --target example.com      # progress + output counts
+  xfound report example.com               # human-readable summary of findings
   xfound inventory                        # what tools/wordlists are installed
   xfound install --profile bugbounty --dry-run
   xfound run --target example.com --scope scope.txt --phase secrets
