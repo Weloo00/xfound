@@ -50,11 +50,11 @@ func Classify(root string, maxPerCategory int) Inventory {
 			add("resolvers")
 		case containsAny(full, "subdomain", "subdomains", "dns", "bitquark"):
 			add("dns")
-		case containsAny(full, "directory", "directories", "raft", "content", "dirbuster") || containsAny(name, "files", "small", "medium", "large"):
+		case containsAny(full, "directory", "directories", "raft", "content", "dirbuster", "aspx", "jsp", "jsf", "cgi-bin", "iis") || containsAny(name, "files", "small", "medium", "large"):
 			add("web-content")
 		case strings.Contains(full, "param"):
 			add("params")
-		case containsAny(full, "payload", "fuzz", "xss", "sqli", "lfi", "burp"):
+		case containsAny(full, "payload", "fuzz", "xss", "sqli", "sql", "ssti", "lfi", "burp"):
 			add("fuzzing")
 		case strings.Contains(full, "user"):
 			add("usernames")

@@ -19,33 +19,42 @@ type Profile struct {
 
 func SupportedTools() []string {
 	tools := []string{
+		"altdns",
 		"amass",
 		"arjun",
 		"bbht",
 		"crtndstry",
 		"dirsearch",
+		"dnscan",
 		"dnsgen",
 		"dnsx",
 		"ffuf",
 		"gau",
 		"gauplus",
+		"gitdorker",
 		"gobuster",
 		"gospider",
 		"hakrawler",
 		"httpx",
 		"JSParser",
+		"jssecrets",
 		"katana",
+		"kiterunner",
+		"lazyegg",
 		"lazyrecon",
+		"mantra",
 		"massdns",
 		"meg",
 		"naabu",
 		"nuclei",
 		"paramspider",
 		"puredns",
+		"shortscan",
 		"shuffledns",
 		"subfinder",
 		"trufflehog",
 		"waybackurls",
+		"waymore",
 	}
 	sort.Strings(tools)
 	return tools
@@ -102,6 +111,15 @@ func build(name string, scale float64) Profile {
 		"meg":         8 * time.Minute,
 		"lazyrecon":   60 * time.Minute,
 		"bbht":        60 * time.Minute,
+		"altdns":      6 * time.Minute,
+		"dnscan":      12 * time.Minute,
+		"gitdorker":   8 * time.Minute,
+		"jssecrets":   6 * time.Minute,
+		"kiterunner":  15 * time.Minute,
+		"lazyegg":     6 * time.Minute,
+		"mantra":      6 * time.Minute,
+		"shortscan":   5 * time.Minute,
+		"waymore":     12 * time.Minute,
 	}
 
 	budgets := make(map[string]time.Duration, len(base))

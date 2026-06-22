@@ -12,6 +12,8 @@ import (
 	"recon-runner/internal/profiles"
 )
 
+const version = "0.2.0"
+
 func main() {
 	if err := run(context.Background(), os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "xfound:", err)
@@ -31,8 +33,15 @@ func run(ctx context.Context, args []string) error {
 		return runInstall(ctx, args[1:])
 	case "run":
 		return runPipeline(ctx, args[1:])
+	case "hunt":
+		return runHunt(ctx, args[1:])
 	case "status":
 		return runStatus(args[1:])
+	case "phases":
+		return runPhases(args[1:])
+	case "version":
+		fmt.Println("xfound", version)
+		return nil
 	case "help", "-h", "--help":
 		usage()
 		return nil
@@ -80,6 +89,7 @@ func runPipeline(ctx context.Context, args []string) error {
 	resume := fs.Bool("resume", true, "skip completed phases")
 	outputRoot := fs.String("output-root", "/root/Targets", "target output root")
 	wordlistsRoot := fs.String("wordlists-root", "/root/tools/wordlists", "wordlists root")
+	toolsMap := fs.String("tools-map", "", "JSON file mapping tool names to executable paths/wrappers")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -93,6 +103,7 @@ func runPipeline(ctx context.Context, args []string) error {
 		Resume:        *resume,
 		OutputRoot:    *outputRoot,
 		WordlistsRoot: *wordlistsRoot,
+		ToolsMapFile:  *toolsMap,
 	})
 	if err != nil {
 		return err
@@ -119,12 +130,86 @@ func runStatus(args []string) error {
 	return pipeline.PrintStatus(os.Stdout, meta, *asJSON)
 }
 
+// runHunt is the easy one-command entrypoint:
+//
+//	xfound hunt spendesk.com
+//
+// It auto-scopes the apex + subdomains (no scope file needed), auto-loads a
+// tools.json from the cwd or /root/.xfound/tools.json if present, and runs the
+// full pipeline. Add --dry-run to preview, or --phase <name> for one phase.
+func runHunt(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("hunt", flag.ExitOnError)
+	profileName := fs.String("profile", profiles.Normal, "scan profile: fast, normal, deep")
+	phase := fs.String("phase", "", "single phase to run (default: all)")
+	dryRun := fs.Bool("dry-run", false, "render commands without executing")
+	resume := fs.Bool("resume", true, "skip completed phases")
+	outputRoot := fs.String("output-root", "/root/Targets", "target output root")
+	wordlistsRoot := fs.String("wordlists-root", "/root/tools/wordlists", "wordlists root")
+	toolsMap := fs.String("tools-map", "", "JSON file mapping tool names to executable paths")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	target := fs.Arg(0)
+	if target == "" {
+		return fmt.Errorf("usage: xfound hunt <target> [--profile fast|normal|deep] [--dry-run]")
+	}
+	if *toolsMap == "" {
+		*toolsMap = defaultToolsMap()
+	}
+	manager := pipeline.Manager{}
+	meta, err := manager.Run(ctx, pipeline.Options{
+		Target:        target,
+		ProfileName:   *profileName,
+		Phase:         *phase,
+		DryRun:        *dryRun,
+		Resume:        *resume,
+		OutputRoot:    *outputRoot,
+		WordlistsRoot: *wordlistsRoot,
+		ToolsMapFile:  *toolsMap,
+		AutoScope:     true,
+	})
+	if err != nil {
+		return err
+	}
+	if *dryRun {
+		pipeline.PrintDryRun(os.Stdout, meta)
+		return nil
+	}
+	return pipeline.PrintStatus(os.Stdout, meta, false)
+}
+
+// defaultToolsMap returns the first existing default tools-map path, or "".
+func defaultToolsMap() string {
+	for _, p := range []string{"tools.json", "/root/.xfound/tools.json"} {
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			return p
+		}
+	}
+	return ""
+}
+
+func runPhases(args []string) error {
+	fs := flag.NewFlagSet("phases", flag.ExitOnError)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	for _, name := range pipeline.PhaseOrder() {
+		fmt.Println(name)
+	}
+	return nil
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, `usage:
-  xfound inventory
+  xfound hunt example.com                 # easy: auto-scope + run everything
+  xfound hunt example.com --dry-run       # preview the commands first
+  xfound hunt example.com --profile fast  # quicker, shorter timeouts
+  xfound status --target example.com      # progress + output counts
+  xfound inventory                        # what tools/wordlists are installed
   xfound install --profile bugbounty --dry-run
-  xfound run --target example.com --scope scope.txt --profile fast --dry-run
-  xfound status --target example.com
+  xfound run --target example.com --scope scope.txt --phase secrets
+  xfound phases
+  xfound version
 
 options:
   -h, --help    show help`)

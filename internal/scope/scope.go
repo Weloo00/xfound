@@ -58,6 +58,19 @@ func Load(path string) (Allowlist, error) {
 	return Allowlist{entries: entries}, nil
 }
 
+// SelfScope returns an Allowlist authorizing the given target apex and all of
+// its subdomains. Used by `xfound hunt` so a single domain needs no scope file.
+func SelfScope(target string) (Allowlist, error) {
+	host := normalizeHost(target)
+	if host == "" {
+		return Allowlist{}, fmt.Errorf("invalid target %q", target)
+	}
+	return Allowlist{entries: []entry{
+		{raw: host, exact: host},
+		{raw: "*." + host, wildcard: host},
+	}}, nil
+}
+
 func (a Allowlist) Allows(target string) bool {
 	host := normalizeHost(target)
 	if host == "" {

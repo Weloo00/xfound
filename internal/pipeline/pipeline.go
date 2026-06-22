@@ -58,6 +58,8 @@ type Options struct {
 	Resume        bool
 	OutputRoot    string
 	WordlistsRoot string
+	ToolsMapFile  string
+	AutoScope     bool
 }
 
 type RunMetadata struct {
@@ -106,6 +108,10 @@ type Layout struct {
 	Nuclei     string
 	Fuzz       string
 	Meg        string
+	Secrets    string
+	API        string
+	Takeover   string
+	Intel      string
 	Errors     string
 	Logs       string
 }
@@ -122,13 +128,25 @@ func (m Manager) Run(ctx context.Context, opts Options) (*RunMetadata, error) {
 	if target == "" {
 		return nil, errors.New("target is required")
 	}
-	allowlist, err := scope.Load(opts.ScopeFile)
-	if err != nil {
-		return nil, err
+	var allowlist scope.Allowlist
+	var err error
+	if opts.ScopeFile != "" {
+		allowlist, err = scope.Load(opts.ScopeFile)
+		if err != nil {
+			return nil, err
+		}
+		if !allowlist.Allows(target) {
+			return nil, fmt.Errorf("target %s is not allowlisted by %s", target, opts.ScopeFile)
+		}
+	} else if opts.AutoScope {
+		allowlist, err = scope.SelfScope(target)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		return nil, errors.New("a scope file (--scope) is required; or use `xfound hunt` for single-domain auto-scope")
 	}
-	if !allowlist.Allows(target) {
-		return nil, fmt.Errorf("target %s is not allowlisted by %s", target, opts.ScopeFile)
-	}
+	_ = allowlist
 	profile := opts.Profile
 	if profile.Name == "" {
 		profile, err = profiles.Get(opts.ProfileName)
@@ -168,7 +186,15 @@ func (m Manager) Run(ctx context.Context, opts Options) (*RunMetadata, error) {
 	}
 	locator := m.Locator
 	if locator == nil {
-		locator = EnvLocator{}
+		toolsMap, err := LoadToolsMap(opts.ToolsMapFile)
+		if err != nil {
+			return nil, err
+		}
+		if toolsMap != nil {
+			locator = ChainLocator{toolsMap, EnvLocator{}}
+		} else {
+			locator = EnvLocator{}
+		}
 	}
 	executor := m.Executor
 	if executor == nil {
@@ -309,21 +335,27 @@ func BuildPhase(name, target string, profile profiles.Profile, layout Layout, wl
 	webWordlist := wl.First("web-content")
 	paramWordlist := wl.First("params")
 	resolvers := wl.First("resolvers")
+	dnsWordlist := wl.First("dns")
 	if paramWordlist == "" {
 		paramWordlist = webWordlist
 	}
+	jsURLs := filepath.Join(layout.JS, "js-urls.txt")
 
 	switch name {
 	case "subdomains":
+		cmds := []runner.CommandSpec{
+			spec("subfinder", []string{"-d", target, "-silent"}, filepath.Join(layout.Subdomains, "subfinder.txt"), true, ""),
+			spec("amass", []string{"enum", "-passive", "-d", target}, filepath.Join(layout.Subdomains, "amass.txt"), true, ""),
+		}
+		if dnsWordlist != "" {
+			cmds = append(cmds, spec("dnscan", []string{"-d", target, "-w", dnsWordlist, "-o", filepath.Join(layout.Subdomains, "dnscan.txt")}, logFile("dnscan"), true, dnsWordlist))
+		}
 		return PhasePlan{
 			Name:        name,
 			RequiredAny: []string{"subfinder", "amass"},
-			Commands: []runner.CommandSpec{
-				spec("subfinder", []string{"-d", target, "-silent"}, filepath.Join(layout.Subdomains, "subfinder.txt"), true, ""),
-				spec("amass", []string{"enum", "-passive", "-d", target}, filepath.Join(layout.Subdomains, "amass.txt"), true, ""),
-			},
+			Commands:    cmds,
 			Post: func(l Layout) error {
-				return appendUnique(filepath.Join(l.Subdomains, "all.txt"), filepath.Join(l.Subdomains, "subfinder.txt"), filepath.Join(l.Subdomains, "amass.txt"), filepath.Join(l.Subdomains, "crtndstry.txt"))
+				return appendUnique(filepath.Join(l.Subdomains, "all.txt"), filepath.Join(l.Subdomains, "subfinder.txt"), filepath.Join(l.Subdomains, "amass.txt"), filepath.Join(l.Subdomains, "crtndstry.txt"), filepath.Join(l.Subdomains, "dnscan.txt"))
 			},
 		}, nil
 	case "ct":
@@ -337,15 +369,21 @@ func BuildPhase(name, target string, profile profiles.Profile, layout Layout, wl
 			},
 		}, nil
 	case "dnsgen":
+		cmds := []runner.CommandSpec{
+			spec("dnsgen", []string{subAll}, filepath.Join(layout.DNS, "dnsgen.txt"), true, subAll),
+		}
+		if dnsWordlist != "" {
+			cmds = append(cmds, spec("altdns", []string{"-i", subAll, "-w", dnsWordlist, "-o", filepath.Join(layout.DNS, "altdns.txt")}, logFile("altdns"), true, subAll))
+		}
 		return PhasePlan{
-			Name: name,
-			Commands: []runner.CommandSpec{
-				spec("dnsgen", []string{subAll}, filepath.Join(layout.DNS, "dnsgen.txt"), true, subAll),
-			},
+			Name:     name,
+			Commands: cmds,
 			Post: func(l Layout) error {
 				out := filepath.Join(l.DNS, "permutations.txt")
-				if lineCount(filepath.Join(l.DNS, "dnsgen.txt")) > 0 {
-					return appendUnique(out, filepath.Join(l.DNS, "dnsgen.txt"))
+				gen := filepath.Join(l.DNS, "dnsgen.txt")
+				alt := filepath.Join(l.DNS, "altdns.txt")
+				if lineCount(gen) > 0 || lineCount(alt) > 0 {
+					return appendUnique(out, gen, alt, filepath.Join(l.Subdomains, "all.txt"))
 				}
 				return appendUnique(out, filepath.Join(l.Subdomains, "all.txt"))
 			},
@@ -388,9 +426,10 @@ func BuildPhase(name, target string, profile profiles.Profile, layout Layout, wl
 				spec("waybackurls", []string{target}, filepath.Join(layout.URLs, "waybackurls.txt"), true, ""),
 				spec("gau", []string{"--subs", target}, filepath.Join(layout.URLs, "gau.txt"), true, ""),
 				spec("gauplus", []string{"-t", "5", target}, filepath.Join(layout.URLs, "gauplus.txt"), true, ""),
+				spec("waymore", []string{"-i", target, "-mode", "U", "-oU", filepath.Join(layout.URLs, "waymore.txt")}, logFile("waymore"), true, ""),
 			},
 			Post: func(l Layout) error {
-				return appendUnique(filepath.Join(l.URLs, "all.txt"), filepath.Join(l.URLs, "waybackurls.txt"), filepath.Join(l.URLs, "gau.txt"), filepath.Join(l.URLs, "gauplus.txt"))
+				return appendUnique(filepath.Join(l.URLs, "all.txt"), filepath.Join(l.URLs, "waybackurls.txt"), filepath.Join(l.URLs, "gau.txt"), filepath.Join(l.URLs, "gauplus.txt"), filepath.Join(l.URLs, "waymore.txt"))
 			},
 		}, nil
 	case "crawl":
@@ -408,16 +447,59 @@ func BuildPhase(name, target string, profile profiles.Profile, layout Layout, wl
 			},
 		}, nil
 	case "js":
+		cmds := []runner.CommandSpec{
+			spec("JSParser", []string{"-l", allURLs}, filepath.Join(layout.JS, "endpoints.txt"), true, allURLs),
+		}
+		lazyegg := spec("lazyegg", []string{}, filepath.Join(layout.JS, "lazyegg.txt"), true, allURLs)
+		lazyegg.StdinFile = allURLs
+		cmds = append(cmds, lazyegg)
 		return PhasePlan{
-			Name: name,
-			Commands: []runner.CommandSpec{
-				spec("JSParser", []string{"-l", allURLs}, filepath.Join(layout.JS, "endpoints.txt"), true, allURLs),
-				spec("trufflehog", []string{"filesystem", layout.JS, "--json"}, filepath.Join(layout.JS, "trufflehog.jsonl"), true, ""),
-			},
+			Name:     name,
+			Commands: cmds,
 			Post: func(l Layout) error {
 				_ = extractParams(filepath.Join(l.JS, "endpoints.txt"), filepath.Join(l.JS, "params.txt"))
 				_ = extractHosts(filepath.Join(l.JS, "endpoints.txt"), filepath.Join(l.JS, "subdomains.txt"))
+				_ = filterByExt(filepath.Join(l.URLs, "all.txt"), filepath.Join(l.JS, "js-urls.txt"), ".js")
 				return nil
+			},
+		}, nil
+	case "secrets":
+		mantra := spec("mantra", []string{}, filepath.Join(layout.Secrets, "mantra.txt"), true, jsURLs)
+		mantra.StdinFile = jsURLs
+		return PhasePlan{
+			Name: name,
+			Commands: []runner.CommandSpec{
+				mantra,
+				spec("jssecrets", []string{"-l", jsURLs}, filepath.Join(layout.Secrets, "jssecrets.txt"), true, jsURLs),
+				spec("trufflehog", []string{"filesystem", layout.JS, "--json"}, filepath.Join(layout.Secrets, "trufflehog.jsonl"), true, ""),
+			},
+		}, nil
+	case "api":
+		return PhasePlan{
+			Name: name,
+			Commands: []runner.CommandSpec{
+				spec("kiterunner", []string{"scan", aliveURLs, "-o", "text"}, filepath.Join(layout.API, "kiterunner.txt"), true, aliveURLs),
+			},
+		}, nil
+	case "shortscan":
+		return PhasePlan{
+			Name: name,
+			Commands: []runner.CommandSpec{
+				spec("shortscan", []string{"https://" + target}, filepath.Join(layout.Fuzz, "shortscan.txt"), true, ""),
+			},
+		}, nil
+	case "takeover":
+		return PhasePlan{
+			Name: name,
+			Commands: []runner.CommandSpec{
+				spec("nuclei", []string{"-l", subAll, "-tags", "takeover", "-jsonl", "-o", filepath.Join(layout.Takeover, "nuclei-takeover.jsonl")}, logFile("nuclei-takeover"), true, subAll),
+			},
+		}, nil
+	case "intel":
+		return PhasePlan{
+			Name: name,
+			Commands: []runner.CommandSpec{
+				spec("gitdorker", []string{"-q", target, "-o", filepath.Join(layout.Intel, "gitdorker.txt")}, logFile("gitdorker"), true, ""),
 			},
 		}, nil
 	case "ports":
@@ -580,13 +662,17 @@ func NewLayout(outputRoot, target string) Layout {
 		Nuclei:     filepath.Join(root, "nuclei"),
 		Fuzz:       filepath.Join(root, "fuzz"),
 		Meg:        filepath.Join(root, "meg"),
+		Secrets:    filepath.Join(root, "secrets"),
+		API:        filepath.Join(root, "api"),
+		Takeover:   filepath.Join(root, "takeover"),
+		Intel:      filepath.Join(root, "intel"),
 		Errors:     filepath.Join(root, "errors"),
 		Logs:       filepath.Join(root, "logs"),
 	}
 }
 
 func PhaseOrder() []string {
-	return []string{"subdomains", "ct", "dnsgen", "resolve", "alive", "urls", "crawl", "js", "ports", "nuclei", "fuzz", "meg"}
+	return []string{"subdomains", "ct", "dnsgen", "resolve", "alive", "urls", "crawl", "js", "secrets", "ports", "shortscan", "api", "nuclei", "takeover", "fuzz", "intel", "meg"}
 }
 
 func selectedPhases(phase string) ([]string, error) {
@@ -658,7 +744,7 @@ func phaseComplete(meta *RunMetadata, phase string) bool {
 }
 
 func ensureLayout(l Layout) error {
-	for _, dir := range []string{l.Root, l.Subdomains, l.DNS, l.Alive, l.URLs, l.JS, l.Ports, l.Nuclei, l.Fuzz, l.Meg, l.Errors, l.Logs} {
+	for _, dir := range []string{l.Root, l.Subdomains, l.DNS, l.Alive, l.URLs, l.JS, l.Ports, l.Nuclei, l.Fuzz, l.Meg, l.Secrets, l.API, l.Takeover, l.Intel, l.Errors, l.Logs} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
@@ -805,6 +891,39 @@ func extractHosts(input, out string) error {
 	return os.WriteFile(out, []byte(strings.Join(hosts, "\n")+newlineIfAny(hosts)), 0o644)
 }
 
+// filterByExt writes the subset of URLs from input whose path ends with ext
+// (case-insensitive, ignoring any query string) to out, de-duplicated.
+func filterByExt(input, out, ext string) error {
+	f, err := os.Open(input)
+	if err != nil {
+		return appendUnique(out)
+	}
+	defer f.Close()
+	ext = strings.ToLower(ext)
+	seen := map[string]bool{}
+	var matched []string
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		raw := strings.TrimSpace(sc.Text())
+		if raw == "" {
+			continue
+		}
+		path := raw
+		if u, err := url.Parse(raw); err == nil && u.Path != "" {
+			path = u.Path
+		}
+		if strings.HasSuffix(strings.ToLower(path), ext) && !seen[raw] {
+			seen[raw] = true
+			matched = append(matched, raw)
+		}
+	}
+	sort.Strings(matched)
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(out, []byte(strings.Join(matched, "\n")+newlineIfAny(matched)), 0o644)
+}
+
 func collectCounts(l Layout) map[string]int {
 	files := map[string]string{
 		"subdomains":       filepath.Join(l.Subdomains, "all.txt"),
@@ -815,8 +934,13 @@ func collectCounts(l Layout) map[string]int {
 		"js_endpoints":     filepath.Join(l.JS, "endpoints.txt"),
 		"js_params":        filepath.Join(l.JS, "params.txt"),
 		"js_subdomains":    filepath.Join(l.JS, "subdomains.txt"),
+		"js_urls":          filepath.Join(l.JS, "js-urls.txt"),
 		"ports":            filepath.Join(l.Ports, "naabu.txt"),
 		"nuclei":           filepath.Join(l.Nuclei, "nuclei.jsonl"),
+		"takeover":         filepath.Join(l.Takeover, "nuclei-takeover.jsonl"),
+		"secrets_mantra":   filepath.Join(l.Secrets, "mantra.txt"),
+		"api_kiterunner":   filepath.Join(l.API, "kiterunner.txt"),
+		"intel_gitdorker":  filepath.Join(l.Intel, "gitdorker.txt"),
 	}
 	counts := map[string]int{}
 	for name, path := range files {
