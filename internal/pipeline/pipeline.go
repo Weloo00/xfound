@@ -884,6 +884,12 @@ func appendSubdomains(out, target string, inputs ...string) error {
 	target = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(target), "."))
 	seen := map[string]bool{}
 	var hosts []string
+	// Always seed the target host itself so it is resolved and probed even when
+	// it has no subdomains (e.g. a single in-scope host like app.example.com).
+	if isHostname(target) {
+		seen[target] = true
+		hosts = append(hosts, target)
+	}
 	for _, input := range inputs {
 		f, err := os.Open(input)
 		if err != nil {
