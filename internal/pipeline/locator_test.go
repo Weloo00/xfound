@@ -103,6 +103,36 @@ func TestExtractShodanDomainJoinsHostsToApex(t *testing.T) {
 	}
 }
 
+func TestAppendSubdomainsFiltersNoise(t *testing.T) {
+	dir := t.TempDir()
+	in := filepath.Join(dir, "dnscan.txt")
+	out := filepath.Join(dir, "all.txt")
+	noisy := strings.Join([]string{
+		"www.spendesk.com",
+		"API.Spendesk.com", // case-insensitive dedupe to api?
+		"api.spendesk.com",
+		"75.2.60.5",      // IP — drop
+		"10",             // number — drop
+		"[*]",            // banner — drop
+		"MS=ms77763507",  // TXT value — drop
+		"evil.com",       // out of scope — drop
+		"spendesk.com",   // apex — keep
+		"a.b.spendesk.com",
+	}, "\n") + "\n"
+	if err := os.WriteFile(in, []byte(noisy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := appendSubdomains(out, "spendesk.com", in); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(out)
+	got := splitLines(string(data))
+	want := []string{"a.b.spendesk.com", "api.spendesk.com", "spendesk.com", "www.spendesk.com"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("got %v want %v", got, want)
+	}
+}
+
 func splitLines(s string) []string {
 	var out []string
 	for _, l := range filepathSplit(s) {

@@ -402,7 +402,7 @@ func BuildPhase(name, target string, profile profiles.Profile, layout Layout, wl
 				// shodan domain output needs the host column joined to the apex.
 				_ = extractShodanDomain(filepath.Join(l.Subdomains, "shodan-raw.txt"), filepath.Join(l.Subdomains, "shodan.txt"), target)
 				// amass.txt is merged if present (drop in manual amass output).
-				return appendUnique(filepath.Join(l.Subdomains, "all.txt"), filepath.Join(l.Subdomains, "subfinder.txt"), filepath.Join(l.Subdomains, "amass.txt"), filepath.Join(l.Subdomains, "crtndstry.txt"), filepath.Join(l.Subdomains, "dnscan.txt"), filepath.Join(l.Subdomains, "shodan.txt"))
+				return appendSubdomains(filepath.Join(l.Subdomains, "all.txt"), target, filepath.Join(l.Subdomains, "subfinder.txt"), filepath.Join(l.Subdomains, "amass.txt"), filepath.Join(l.Subdomains, "crtndstry.txt"), filepath.Join(l.Subdomains, "dnscan.txt"), filepath.Join(l.Subdomains, "shodan.txt"))
 			},
 		}, nil
 	case "ct":
@@ -412,7 +412,7 @@ func BuildPhase(name, target string, profile profiles.Profile, layout Layout, wl
 				spec("crtndstry", []string{"-d", target}, filepath.Join(layout.Subdomains, "crtndstry.txt"), true, ""),
 			},
 			Post: func(l Layout) error {
-				return appendUnique(filepath.Join(l.Subdomains, "all.txt"), filepath.Join(l.Subdomains, "all.txt"), filepath.Join(l.Subdomains, "crtndstry.txt"))
+				return appendSubdomains(filepath.Join(l.Subdomains, "all.txt"), target, filepath.Join(l.Subdomains, "all.txt"), filepath.Join(l.Subdomains, "crtndstry.txt"))
 			},
 		}, nil
 	case "dnsgen":
@@ -842,6 +842,63 @@ func toolTimeout(profile profiles.Profile, tool string) time.Duration {
 		return d
 	}
 	return 5 * time.Minute
+}
+
+// appendSubdomains merges subdomain sources into out, keeping only valid
+// hostnames that are the apex or a subdomain of it. This drops the noise some
+// tools emit (IPs, bare numbers, TXT-record values like "MS=...", banner lines
+// such as "[*]") so downstream phases only see real in-scope hostnames.
+func appendSubdomains(out, target string, inputs ...string) error {
+	target = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(target), "."))
+	seen := map[string]bool{}
+	var hosts []string
+	for _, input := range inputs {
+		f, err := os.Open(input)
+		if err != nil {
+			continue
+		}
+		sc := bufio.NewScanner(f)
+		for sc.Scan() {
+			host := strings.ToLower(normalizeOutputLine(sc.Text()))
+			if host == "" || seen[host] {
+				continue
+			}
+			if host != target && !strings.HasSuffix(host, "."+target) {
+				continue
+			}
+			if !isHostname(host) {
+				continue
+			}
+			seen[host] = true
+			hosts = append(hosts, host)
+		}
+		_ = f.Close()
+	}
+	sort.Strings(hosts)
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(out, []byte(strings.Join(hosts, "\n")+newlineIfAny(hosts)), 0o644)
+}
+
+// isHostname reports whether s is a syntactically valid DNS hostname (letters,
+// digits, hyphen, underscore per label; at least one dot). Note: a bare IPv4
+// also passes this, so callers additionally constrain by domain suffix.
+func isHostname(s string) bool {
+	if len(s) == 0 || len(s) > 253 || !strings.Contains(s, ".") {
+		return false
+	}
+	for _, label := range strings.Split(s, ".") {
+		if label == "" || len(label) > 63 {
+			return false
+		}
+		for _, r := range label {
+			if !(r == '-' || r == '_' || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func appendUnique(out string, inputs ...string) error {
