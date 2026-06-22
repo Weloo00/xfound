@@ -15,26 +15,30 @@ import (
 func TestIntegrationFakeCommandsTimeoutStderrResumeAndStatus(t *testing.T) {
 	dir := t.TempDir()
 	scopeFile := writeFile(t, dir, "scope.txt", "example.com\n")
+	wordlists := filepath.Join(dir, "wordlists")
+	writeFile(t, wordlists, "Discovery/DNS/subdomains.txt", "www\nmail\n")
 	fakeDir := filepath.Join(dir, "bin")
 	subfinder := writeExecutable(t, fakeDir, "subfinder", "#!/bin/sh\necho subfinder-stderr >&2\necho www.example.com\n")
-	amass := writeExecutable(t, fakeDir, "amass", "#!/bin/sh\necho amass-before-timeout >&2\nsleep 5\n")
+	// dnscan is the slow optional tool that should be killed on timeout.
+	dnscan := writeExecutable(t, fakeDir, "dnscan", "#!/bin/sh\necho dnscan-before-timeout >&2\nsleep 5\n")
 	profile := profiles.Profile{
 		Name: "test",
 		ToolBudgets: map[string]time.Duration{
 			"subfinder": time.Second,
-			"amass":     100 * time.Millisecond,
+			"dnscan":    100 * time.Millisecond,
 		},
 	}
 
 	meta, err := (Manager{Locator: StaticLocator{
 		"subfinder": subfinder,
-		"amass":     amass,
+		"dnscan":    dnscan,
 	}}).Run(context.Background(), Options{
-		Target:     "example.com",
-		ScopeFile:  scopeFile,
-		Profile:    profile,
-		Phase:      "subdomains",
-		OutputRoot: filepath.Join(dir, "Targets"),
+		Target:        "example.com",
+		ScopeFile:     scopeFile,
+		Profile:       profile,
+		Phase:         "subdomains",
+		OutputRoot:    filepath.Join(dir, "Targets"),
+		WordlistsRoot: wordlists,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -42,14 +46,14 @@ func TestIntegrationFakeCommandsTimeoutStderrResumeAndStatus(t *testing.T) {
 	if meta.Phases[0].Status != "completed" {
 		t.Fatalf("phase status=%s reason=%s", meta.Phases[0].Status, meta.Phases[0].Reason)
 	}
-	if meta.Timeouts["amass"] != "subdomains" {
-		t.Fatalf("amass timeout not recorded: %+v", meta.Timeouts)
+	if meta.Timeouts["dnscan"] != "subdomains" {
+		t.Fatalf("dnscan timeout not recorded: %+v", meta.Timeouts)
 	}
-	errData, err := os.ReadFile(filepath.Join(dir, "Targets", "example.com", "errors", "subdomains-amass.stderr.log"))
+	errData, err := os.ReadFile(filepath.Join(dir, "Targets", "example.com", "errors", "subdomains-dnscan.stderr.log"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(errData), "amass-before-timeout") {
+	if !strings.Contains(string(errData), "dnscan-before-timeout") {
 		t.Fatalf("stderr not captured: %q", string(errData))
 	}
 

@@ -384,18 +384,21 @@ func BuildPhase(name, target string, profile profiles.Profile, layout Layout, wl
 
 	switch name {
 	case "subdomains":
+		// amass is intentionally NOT run here — it is slow and routinely hits its
+		// timeout; run it manually (e.g. `amass enum -passive -d <target>`) and
+		// drop the output into subdomains/amass.txt to have it merged on re-run.
 		cmds := []runner.CommandSpec{
 			spec("subfinder", []string{"-d", target, "-silent"}, filepath.Join(layout.Subdomains, "subfinder.txt"), true, ""),
-			spec("amass", []string{"enum", "-passive", "-d", target}, filepath.Join(layout.Subdomains, "amass.txt"), true, ""),
 		}
 		if dnsWordlist != "" {
 			cmds = append(cmds, spec("dnscan", []string{"-d", target, "-w", dnsWordlist, "-o", filepath.Join(layout.Subdomains, "dnscan.txt")}, logFile("dnscan"), true, dnsWordlist))
 		}
 		return PhasePlan{
 			Name:        name,
-			RequiredAny: []string{"subfinder", "amass"},
+			RequiredAny: []string{"subfinder"},
 			Commands:    cmds,
 			Post: func(l Layout) error {
+				// amass.txt is merged if present (drop in manual amass output).
 				return appendUnique(filepath.Join(l.Subdomains, "all.txt"), filepath.Join(l.Subdomains, "subfinder.txt"), filepath.Join(l.Subdomains, "amass.txt"), filepath.Join(l.Subdomains, "crtndstry.txt"), filepath.Join(l.Subdomains, "dnscan.txt"))
 			},
 		}, nil
