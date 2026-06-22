@@ -1,0 +1,21 @@
+# Built binaries
+/bin/
+
+# Go build/test artifacts
+*.test
+*.out
+coverage.txt
+
+# Local environment and editor files
+.env
+.env.*
+!.env.example
+.DS_Store
+.idea/
+.vscode/
+
+# Recon output should not be committed
+/Targets/
+run.json
+logs/
+errors/
