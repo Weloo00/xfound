@@ -439,18 +439,26 @@ func BuildPhase(name, target string, profile profiles.Profile, layout Layout, wl
 		// dnsx works off the system resolver; the brute resolvers (puredns,
 		// shuffledns, massdns) all REQUIRE a resolvers list, so they are only
 		// added when one is available. shuffledns v1.2+ needs `-mode resolve`.
-		dnsxArgs := []string{"-l", perms, "-silent", "-a", "-resp"}
+		// Resolve the discovered subdomains by default. Only if a permutation
+		// list exists (the optional `dnsgen` phase was run) do we brute that
+		// instead — permutation brute over a wildcard domain is slow and noisy,
+		// so it is opt-in, not part of the default pipeline.
+		resolveInput := subAll
+		if fileExists(perms) {
+			resolveInput = perms
+		}
+		dnsxArgs := []string{"-l", resolveInput, "-silent", "-a", "-resp"}
 		if resolvers != "" {
 			dnsxArgs = append(dnsxArgs, "-r", resolvers)
 		}
 		cmds := []runner.CommandSpec{
-			spec("dnsx", dnsxArgs, filepath.Join(layout.DNS, "dnsx.txt"), true, perms),
+			spec("dnsx", dnsxArgs, filepath.Join(layout.DNS, "dnsx.txt"), true, resolveInput),
 		}
 		if resolvers != "" {
 			cmds = append(cmds,
-				spec("puredns", []string{"resolve", perms, "-r", resolvers, "-w", filepath.Join(layout.DNS, "puredns.txt")}, logFile("puredns"), true, perms),
-				spec("shuffledns", []string{"-mode", "resolve", "-d", target, "-list", perms, "-r", resolvers, "-o", filepath.Join(layout.DNS, "shuffledns.txt")}, logFile("shuffledns"), true, perms),
-				spec("massdns", []string{"-r", resolvers, "-t", "A", "-o", "S", "-w", filepath.Join(layout.DNS, "massdns.txt"), perms}, logFile("massdns"), true, perms),
+				spec("puredns", []string{"resolve", resolveInput, "-r", resolvers, "-w", filepath.Join(layout.DNS, "puredns.txt")}, logFile("puredns"), true, resolveInput),
+				spec("shuffledns", []string{"-mode", "resolve", "-d", target, "-list", resolveInput, "-r", resolvers, "-o", filepath.Join(layout.DNS, "shuffledns.txt")}, logFile("shuffledns"), true, resolveInput),
+				spec("massdns", []string{"-r", resolvers, "-t", "A", "-o", "S", "-w", filepath.Join(layout.DNS, "massdns.txt"), resolveInput}, logFile("massdns"), true, resolveInput),
 			)
 		}
 		return PhasePlan{
@@ -726,14 +734,18 @@ func NewLayout(outputRoot, target string) Layout {
 }
 
 func PhaseOrder() []string {
-	return []string{"subdomains", "ct", "dnsgen", "resolve", "alive", "urls", "crawl", "js", "secrets", "ports", "shortscan", "api", "nuclei", "takeover", "fuzz", "intel", "meg"}
+	// dnsgen (DNS permutation brute) is intentionally NOT in the default order:
+	// it explodes to millions of candidates and is slow/noisy on wildcard
+	// domains. Run it explicitly with `--phase dnsgen` before `--phase resolve`
+	// when you want permutation brute-forcing.
+	return []string{"subdomains", "ct", "resolve", "alive", "urls", "crawl", "js", "secrets", "ports", "shortscan", "api", "nuclei", "takeover", "fuzz", "intel", "meg"}
 }
 
 func selectedPhases(phase string) ([]string, error) {
 	if phase == "" {
 		return PhaseOrder(), nil
 	}
-	valid := append(PhaseOrder(), "lazyrecon")
+	valid := append(PhaseOrder(), "dnsgen", "lazyrecon")
 	for _, v := range valid {
 		if phase == v {
 			return []string{phase}, nil
