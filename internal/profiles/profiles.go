@@ -49,6 +49,7 @@ func SupportedTools() []string {
 		"nuclei",
 		"paramspider",
 		"puredns",
+		"shodan",
 		"shortscan",
 		"shuffledns",
 		"subfinder",
@@ -118,6 +119,7 @@ func build(name string, scale float64) Profile {
 		"kiterunner":  15 * time.Minute,
 		"lazyegg":     6 * time.Minute,
 		"mantra":      6 * time.Minute,
+		"shodan":      3 * time.Minute,
 		"shortscan":   5 * time.Minute,
 		"waymore":     12 * time.Minute,
 	}

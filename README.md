@@ -98,6 +98,21 @@ exec python3 /root/tools/ParamSpider/paramspider.py "$@"
 > Flags for the directory-based tools are best-effort defaults. Always
 > `--dry-run` first and adjust the wrapper/args to match your tool versions.
 
+## API keys (passive sources)
+
+xfound itself stores no keys — it relies on the underlying tools' own config:
+
+- **subfinder** — add keys to `~/.config/subfinder/provider-config.yaml`
+  (e.g. `shodan: [KEY]`, `virustotal: [KEY]`, `censys: [...]`). This boosts the
+  `subdomains` phase automatically.
+- **shodan** CLI — `shodan init <KEY>` once; the `subdomains` phase then also
+  runs `shodan domain <target>` and merges the hosts it returns.
+- **waymore** — `~/.config/waymore/config.yml` with `VIRUSTOTAL_API_KEY:` /
+  `URLSCAN_API_KEY:` boosts the `urls` phase.
+
+Keep real keys out of the repo (they live only on the host). Rotate any key
+that has been shared in plaintext.
+
 ## Safety
 
 Only run active phases against assets where you have explicit authorization. If

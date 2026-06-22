@@ -389,6 +389,7 @@ func BuildPhase(name, target string, profile profiles.Profile, layout Layout, wl
 		// drop the output into subdomains/amass.txt to have it merged on re-run.
 		cmds := []runner.CommandSpec{
 			spec("subfinder", []string{"-d", target, "-silent"}, filepath.Join(layout.Subdomains, "subfinder.txt"), true, ""),
+			spec("shodan", []string{"domain", target}, filepath.Join(layout.Subdomains, "shodan-raw.txt"), true, ""),
 		}
 		if dnsWordlist != "" {
 			cmds = append(cmds, spec("dnscan", []string{"-d", target, "-w", dnsWordlist, "-o", filepath.Join(layout.Subdomains, "dnscan.txt")}, logFile("dnscan"), true, dnsWordlist))
@@ -398,8 +399,10 @@ func BuildPhase(name, target string, profile profiles.Profile, layout Layout, wl
 			RequiredAny: []string{"subfinder"},
 			Commands:    cmds,
 			Post: func(l Layout) error {
+				// shodan domain output needs the host column joined to the apex.
+				_ = extractShodanDomain(filepath.Join(l.Subdomains, "shodan-raw.txt"), filepath.Join(l.Subdomains, "shodan.txt"), target)
 				// amass.txt is merged if present (drop in manual amass output).
-				return appendUnique(filepath.Join(l.Subdomains, "all.txt"), filepath.Join(l.Subdomains, "subfinder.txt"), filepath.Join(l.Subdomains, "amass.txt"), filepath.Join(l.Subdomains, "crtndstry.txt"), filepath.Join(l.Subdomains, "dnscan.txt"))
+				return appendUnique(filepath.Join(l.Subdomains, "all.txt"), filepath.Join(l.Subdomains, "subfinder.txt"), filepath.Join(l.Subdomains, "amass.txt"), filepath.Join(l.Subdomains, "crtndstry.txt"), filepath.Join(l.Subdomains, "dnscan.txt"), filepath.Join(l.Subdomains, "shodan.txt"))
 			},
 		}, nil
 	case "ct":
@@ -932,6 +935,54 @@ func extractHosts(input, out string) error {
 		}
 	}
 	sort.Strings(hosts)
+	return os.WriteFile(out, []byte(strings.Join(hosts, "\n")+newlineIfAny(hosts)), 0o644)
+}
+
+// extractShodanDomain parses `shodan domain <target>` output into FQDNs.
+// Each data row looks like "<host>  <TYPE>  <value>"; the host column is empty
+// for apex records. We join non-empty hosts to the apex (e.g. "api" -> the
+// FQDN "api.<target>"), skip wildcards, and write a sorted, de-duplicated list.
+func extractShodanDomain(input, out, target string) error {
+	f, err := os.Open(input)
+	if err != nil {
+		return appendUnique(out)
+	}
+	defer f.Close()
+	recordTypes := map[string]bool{
+		"A": true, "AAAA": true, "CNAME": true, "MX": true, "NS": true,
+		"SOA": true, "TXT": true, "CAA": true, "PTR": true, "SRV": true,
+		"DNAME": true, "NAPTR": true, "DS": true, "HINFO": true,
+	}
+	target = strings.ToLower(strings.TrimSuffix(target, "."))
+	seen := map[string]bool{}
+	var hosts []string
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		fields := strings.Fields(sc.Text())
+		if len(fields) < 2 {
+			continue
+		}
+		host := strings.ToLower(strings.TrimSuffix(fields[0], "."))
+		// First column is a record type => apex record, no subdomain label.
+		if recordTypes[strings.ToUpper(fields[0])] {
+			continue
+		}
+		if host == "" || host == "*" || strings.HasPrefix(host, "*") {
+			continue
+		}
+		fqdn := host
+		if !strings.HasSuffix(host, "."+target) && host != target {
+			fqdn = host + "." + target
+		}
+		if !seen[fqdn] {
+			seen[fqdn] = true
+			hosts = append(hosts, fqdn)
+		}
+	}
+	sort.Strings(hosts)
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		return err
+	}
 	return os.WriteFile(out, []byte(strings.Join(hosts, "\n")+newlineIfAny(hosts)), 0o644)
 }
 

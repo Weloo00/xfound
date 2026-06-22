@@ -3,6 +3,7 @@ package pipeline
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -74,6 +75,31 @@ func TestFilterByExtSelectsJSURLs(t *testing.T) {
 	}
 	if contains(splitLines(got), "https://x.com/style.css") {
 		t.Fatalf("css should be filtered out:\n%s", got)
+	}
+}
+
+func TestExtractShodanDomainJoinsHostsToApex(t *testing.T) {
+	dir := t.TempDir()
+	in := filepath.Join(dir, "shodan-raw.txt")
+	out := filepath.Join(dir, "shodan.txt")
+	raw := "SPENDESK.COM\n\n" +
+		"                         A      75.2.60.5\n" +
+		"                         MX     aspmx.l.google.com\n" +
+		"www                      A      1.2.3.4\n" +
+		"api                      CNAME  x.cloudfront.net\n" +
+		"*.dev                    A      9.9.9.9\n" +
+		"app.spendesk.com         A      2.2.2.2\n"
+	if err := os.WriteFile(in, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := extractShodanDomain(in, out, "spendesk.com"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(out)
+	got := splitLines(string(data))
+	want := []string{"api.spendesk.com", "app.spendesk.com", "www.spendesk.com"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("got %v want %v", got, want)
 	}
 }
 

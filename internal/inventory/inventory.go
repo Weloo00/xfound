@@ -131,6 +131,7 @@ func ToolDefs() []ToolDef {
 		"gitdorker":   "intel",
 		"altdns":      "dns",
 		"dnscan":      "dns",
+		"shodan":      "subdomains",
 		"waymore":     "urls",
 		"lazyrecon":   "compat",
 		"bbht":        "install",
